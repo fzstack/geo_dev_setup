@@ -8,6 +8,8 @@
  * When running `yarn build` or `yarn build-main`, this file is compiled to
  * `./src/main.prod.js` using webpack. This gives us some performance wins.
  */
+ app.allowRendererProcessReuse = false
+
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
 import path from 'path';
@@ -15,6 +17,9 @@ import { app, BrowserWindow, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
+import Store from 'electron-store';
+
+Store.initRenderer();
 
 export default class AppUpdater {
   constructor() {
@@ -74,7 +79,10 @@ const createWindow = async () => {
     icon: getAssetPath('icon.png'),
     webPreferences: {
       nodeIntegration: true,
+      enableRemoteModule: true,
+      contextIsolation: false,
     },
+    autoHideMenuBar: true,
   });
 
   mainWindow.loadURL(`file://${__dirname}/index.html`);

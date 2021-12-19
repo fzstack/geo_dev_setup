@@ -1,6 +1,8 @@
 import { action, autorun, computed, makeObservable, observable } from 'mobx';
 import MqttClient from '@/utilities/mqtt_client'
-
+import XLSX from 'xlsx';
+import confMan from '@/conf_man';
+import ComService from '@/com_service';
 
 type Origin = {
   topic: string,
@@ -71,7 +73,7 @@ export class Device {
 
   async auth() {
     if(this.authState) return;
-    await this.outter.client.pub(this.gateway, `$cmd=set_did_key&device_sn=${this.sn}&did=${this.id}&key=${this.id.padStart(36, '0')}`)
+    // await this.outter.client.pub(this.gateway, `$cmd=set_did_key&device_sn=${this.sn}&did=${this.id}&key=${this.id.padStart(36, '0')}`)
     this.authState = true;
     this.authTime = new Date();
     this.callbacks['auth']?.();
@@ -102,7 +104,7 @@ export class Device {
   }
 
   private async pub(msg: string) {
-    await this.outter.client.pub(this.gateway, msg);
+    // await this.outter.client.pub(this.gateway, msg);
   }
 
   private static didToSn(did: string): string {
@@ -114,80 +116,140 @@ export class Device {
   }
 }
 
+type SeqItem = {
+  cmd: string;
+  desc: string;
+}
+
+type InitSeqConfigItemProps = {
+  name: string,
+  seq: SeqItem[],
+}
+
+export class InitSeqConfigItem {
+  name: string;
+  seq: SeqItem[];
+
+  constructor(private outter: DeviceStore, props: InitSeqConfigItemProps) {
+    makeObservable(this, {
+      name: observable,
+      select: action,
+      index: computed,
+    });
+    this.name = props.name;
+    this.seq = props.seq;
+  }
+
+  select() {
+    this.outter.selectItem(this);
+  }
+
+  get index(): number {
+    return this.outter.indexOfItem(this);
+  }
+}
+
+export class DataDictItem {
+  constructor(public sn: string, public did: string, public key: string) {
+
+  }
+}
+
+
 export class DeviceStore {
   devices: Device[] = [];
   origins: Origin[] = [];
   autoAuth: boolean = true;
   online: boolean = false;
+  initSeqConfigItems: InitSeqConfigItem[];
+  currentSelectedItem: InitSeqConfigItem | null = null;
+  dataDictItems: DataDictItem[] = [];
+  currentSelectedDevice: DataDictItem | null = null;
 
-  constructor(public client: MqttClient) {
+  constructor(private comService: ComService) {
     makeObservable(this, {
       devices: observable,
       origins: observable,
       autoAuth: observable,
       online: observable,
+      initSeqConfigItems: observable,
+      currentSelectedItem: observable,
+      dataDictItems: observable,
+      currentSelectedDevice: observable,
+      currentItem: computed,
       setAutoAuth: action,
       addDevice: action,
+      selectItem: action,
+      loadDataDict: action,
+      selectCurrentDevice: action,
+      setOnline: action,
     });
 
-    this.client.on('connected', action(() => {
-      this.online = true;
-    }));
+    comService.on('connected', () => {
+      this.setOnline(true);
+    });
 
-    this.client.on('msg', action(msg => {
-      try {
-        const from = msg.from();
-        const params = msg.params();
-        const json = params.get('json');
-        let device: Device | undefined;
-        if(json != null) {
-          const [[id, info]]: [string, Object][] = Object.entries(json);
-          const [[name, record]]: [string, Object][] = Object.entries(info);
-          const [[timeStr, value]]: [string, object][] = Object.entries(record);
+    comService.on('disconnected', () => {
+      this.setOnline(false);
+    });
 
-          device = this.devices.find(device => device.id == id);
-          if(device == null) {
-            device = new Device(this, {
-              id,
-              gateway: from,
-            });
-            this.devices.push(device);
+
+    const dataDictPath = confMan.get('dataDictPath');
+    if(dataDictPath != null) {
+      this.loadDataDict(dataDictPath as string);
+    }
+    confMan.onDidChange('dataDictPath', val => {
+      this.loadDataDict(val as string);
+    });
+
+    this.initSeqConfigItems = [
+      new InitSeqConfigItem(this, {
+        name: 'TEST',
+        seq: [
+          {
+            cmd: "AT+TFREQ=FFF",
+            desc: "设置发送频率",
+          },
+          {
+            cmd: "AT+RFREQ=FFF",
+            desc: "设置接收频率",
           }
-          device.name = name;
-          device.value = value;
-          device.authState = true;
-        }
-
-        const cmd = params.get('cmd');
-
-        if(cmd == 'get_did_key') {
-          const sn = params.get('device_sn');
-          if(sn != null) {
-            const tmpDevice = new Device(this, {
-              sn,
-              gateway: from,
-            });
-            device = this.devices.find(device => device.id == tmpDevice.id);
-            if(device == null) {
-              device = tmpDevice;
-              this.devices.push(device);
-            }
-            if(this.autoAuth) {
-              // device.auth();
-            }
+        ],
+      }),
+      new InitSeqConfigItem(this, {
+        name: '网关',
+        seq: [
+          {
+            cmd: "AT+HELLO",
+            desc: "你好",
+          },
+        ],
+      }),
+      new InitSeqConfigItem(this, {
+        name: '子设备',
+        seq: [
+          {
+            cmd: "AT+TEST",
+            desc: "测试",
+          },
+          {
+            cmd: "AT+CHN=5",
+            desc: "设置频段",
+          },
+          {
+            cmd: "AT+BALABALA",
+            desc: "其他的",
           }
-        }
-      } catch(e) {
+        ],
+      }),
+    ];
 
-      }
-    }));
+    this.currentSelectedItem = this.initSeqConfigItems[0];
 
-    this.client.on('origin', action((topic, payload) => {
-      this.origins.push({topic, payload: payload.toString('utf8'), id: Math.random()})
-      if(this.origins.length > 100) {
-        this.origins.shift();
-      }
-    }));
+  }
+
+  get currentItem() {
+    return this.currentSelectedItem;
   }
 
   addDevice(id: string, gateway: string): Device {
@@ -203,5 +265,80 @@ export class DeviceStore {
     this.autoAuth = value;
   }
 
+  selectItem(item: InitSeqConfigItem | null) {
+    this.currentSelectedItem = item;
+  }
+
+  indexOfItem(item:InitSeqConfigItem) {
+    return this.initSeqConfigItems.indexOf(item);
+  }
+
+  loadDataDict(path: string) {
+    const t = XLSX.readFile(path);
+    // confMan.set('dataDictPath', path);
+    this.dataDictItems.splice(0);
+    for(const sheetName of t.SheetNames) {
+      const sheet = t.Sheets[sheetName];
+      const ref = sheet['!ref'];
+      const rend = +ref!.match(/^\w+:\D+?(\d+)$/i)![1];
+        for(let i = 2; i <= rend; i++) {
+          this.dataDictItems.push(new DataDictItem(sheet[`A${i}`].v, sheet[`B${i}`].v, sheet[`C${i}`].v))
+        }
+    }
+  }
+
+  selectCurrentDevice(sn: string) {
+    this.currentSelectedDevice = this.dataDictItems.filter(e => e.sn == sn)?.[0] ?? null;
+    console.log('current', this.currentSelectedDevice)
+  }
+
+  setOnline(ol: boolean) {
+    this.online = ol;
+  }
+
 }
 
+
+// export class ConfigStore {
+//   initSeqConfigItems: InitSeqConfigItem[];
+//   test: string;
+
+//   constructor() {
+//     makeObservable(this, {
+//       initSeqConfigItems: observable,
+//       test: observable,
+//       deselectInitSeqConfigItemWithout: action,
+//       testWhat: action,
+//     });
+//     this.test = '233';
+//     this.initSeqConfigItems = [
+//       new InitSeqConfigItem(this, {
+//         name: 'TEST',
+//         seq: [
+//           'HELLO',
+//         ],
+//       }),
+//       new InitSeqConfigItem(this, {
+//         name: '网关',
+//         seq: [
+//           'ABCD',
+//         ],
+//       }),
+//       new InitSeqConfigItem(this, {
+//         name: '子设备',
+//         seq: [
+//           'ABCD',
+//         ],
+//       }),
+//     ];
+//   }
+
+//   testWhat(value: string) {
+//     this.test = value
+//   }
+
+//   deselectInitSeqConfigItemWithout(item: InitSeqConfigItem) {
+//     this.initSeqConfigItems.filter(x => x != item).forEach(x => x.deselect());
+//   }
+
+// }

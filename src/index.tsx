@@ -5,17 +5,16 @@ import MqttClient from './utilities/mqtt_client';
 import { DeviceStore } from '@/store';
 import { Provider } from 'mobx-react';
 import { SnackbarProvider } from 'notistack';
+import ComService from '@/com_service';
 
-const client = new MqttClient();
-const deviceStore = new DeviceStore(client);
-(async () => {
-  await client.connect();
-})();
+// const client = new MqttClient();
+const comService = new ComService();
+const deviceStore = new DeviceStore(comService);
 
 (window as any).deviceStore = deviceStore;
 
 render(
-  <Provider {...{deviceStore}}>
+  <Provider {...{deviceStore, comService}}>
     <SnackbarProvider maxSnack={4}>
       <App />
     </SnackbarProvider>

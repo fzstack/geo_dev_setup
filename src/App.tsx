@@ -13,7 +13,8 @@ const theme = createMuiTheme({
       // contrastText: 这将计算与 palette.primary.main 的对比度
     },
     secondary: {
-      main: '#3E5D64',
+      // main: '#3E5D64',
+      main: '#EA6F5A',
     },
     // 使用 `getContrastText()` 来最大化
     // 背景和文本的对比度
