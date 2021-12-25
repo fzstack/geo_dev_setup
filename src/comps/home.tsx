@@ -7,80 +7,43 @@ import Link from '@material-ui/core/Link';
 import {
   AppBar,
   Badge,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogProps,
-  DialogTitle,
-  Drawer,
   IconButton,
-  InputLabel,
-  List,
-  ListItem,
   ListItemSecondaryAction,
   ListItemText,
-  ListSubheader,
   Menu,
   MenuItem,
-  MenuProps,
-  Paper,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Toolbar,
   Tooltip,
-  FormControl,
-  InputAdornment,
   Grid,
   Chip,
   Stepper,
   Step,
   StepLabel,
-  ListItemIcon,
-  Avatar,
-  ListItemAvatar,
   Backdrop,
   CircularProgress,
+  ListItemIcon,
 } from '@material-ui/core';
-import MuiDialogTitle from '@material-ui/core/DialogTitle';
-import RefreshIcon from '@material-ui/icons/Refresh';
-import AccountCircleIcon from '@material-ui/icons/AccountCircle';
-import AttachmentIcon from '@material-ui/icons/Attachment';
 import TuneIcon from '@material-ui/icons/Tune';
-import AddIcon from '@material-ui/icons/Add';
 import CheckIcon from '@material-ui/icons/Check';
-import FolderOpenIcon from '@material-ui/icons/FolderOpen';
 import ErrorOutlineIcon from '@material-ui/icons/ErrorOutline';
 import FingerprintIcon from '@material-ui/icons/Fingerprint';
+import LinkOffIcon from '@material-ui/icons/LinkOff';
 import VpnKeyIcon from '@material-ui/icons/VpnKey';
 import DeveloperBoardIcon from '@material-ui/icons/DeveloperBoard';
 import { observer, inject } from 'mobx-react';
-import { Device, DeviceStore, InitSeqConfigItem } from '@/store';
-import { autorun } from 'mobx';
-import moment from 'moment';
+import { DeviceStore } from '@/store';
 import { useSnackbar } from 'notistack';
-import { Field, FieldArray, Form, Formik } from 'formik';
-import { TextField, Select } from 'formik-material-ui';
-import * as yup from 'yup';
-import { DeviceType } from '@/store';
-import { amber, lightGreen, red } from '@material-ui/core/colors';
-import { random, sample } from 'lodash';
+import { mapValues } from 'lodash';
 import Typewriter from 'typewriter-effect';
 import { Autorenew, Send } from '@material-ui/icons';
-import XLSX from 'xlsx';
-import { remote, shell } from 'electron';
-import { storeAnnotation } from 'mobx/dist/internal';
 import confMan from '@/conf_man';
 import ComService from '@/com_service';
-import { delay } from '@/utilities'
-
+import { delay, avoidReenter, assets } from '@/utilities'
 import { DictDialog, InitSeqDialog, ComDialog, ScanMan } from '@/comps';
-import zIndex from '@material-ui/core/styles/zIndex';
+import { red } from '@material-ui/core/colors';
+import {play, Voice} from '@/utilities/voice';
+
 
 function Copyright() {
   return (
@@ -182,6 +145,9 @@ const useStyles = makeStyles((theme) => ({
   configMenu: {
     width: '170px',
   },
+  comDevMenu: {
+    minWidth: '130px',
+  },
   footerStatus: {
     display: 'flex',
     flexDirection: 'row',
@@ -226,11 +192,16 @@ type HomeProps = {
 
 export default inject("deviceStore", "comService")(observer(({deviceStore, comService}: HomeProps) => {
   const classes = useStyles({isOnline: deviceStore.online});
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const isMenuOpen = Boolean(anchorEl);
-  const [code, setCode] = useState<string | null>(null);
+  const [anchorEl, setAnchorEl] = useState({
+    config: null as (HTMLElement | null),
+    comDev: null as (HTMLElement | null),
+  });
+  const isMenuOpen = mapValues(anchorEl, v => Boolean(v));
 
+  const [displayCode, setDisplayCode] = useState<string | null>(null);
   const { enqueueSnackbar } = useSnackbar();
+
+  const [activeStep, setActiveStep] = useState(0);
 
   const [isOpen, setOpen] = useState({
     dictDialog: false,
@@ -239,17 +210,42 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
     backdrop: false,
   });
 
+  useEffect(() => {
+    let voice: Voice;
+    switch(activeStep) {
+      case 0:
+        voice = 'wait_qrcode_scan';
+        break;
+      case 1:
+        voice = 'wait_insert_power';
+        break;
+      case 2:
+        voice = 'device_configurating';
+        break;
+      case 3:
+        voice = 'device_self_testing';
+        break;
+      case 4:
+        voice = 'devce_ready';
+        break;
+      default:
+        return;
+    }
+
+    play(voice);
+  }, [activeStep]);
+
 
   const configMenu = (
     <Menu
-      anchorEl={anchorEl}
+      anchorEl={anchorEl.config}
       classes={{
         list: classes.configMenu,
       }}
       keepMounted
-      open={isMenuOpen}
+      open={isMenuOpen.config}
       onClose={() => {
-        setAnchorEl(null);
+        setAnchorEl(a => ({...a, config: null}));
       }}
       anchorOrigin={{
         vertical: 'bottom',
@@ -262,28 +258,59 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
       getContentAnchorEl={null}
     >
       <MenuItem onClick={() => {
-        deviceStore.setAutoAuth(!deviceStore.autoAuth);
-      }}>
-        <ListItemText primary="自动授权" />
-        <ListItemSecondaryAction style={{pointerEvents: 'none'}}>
-          <Switch checked={deviceStore.autoAuth} onChange={e => {
-            deviceStore.setAutoAuth(e.target.checked);
-          }}/>
-        </ListItemSecondaryAction>
-      </MenuItem>
-      <MenuItem onClick={() => {
-        setAnchorEl(null);
+        setAnchorEl(a => ({...a, config: null}));
         //TODO: 打开设置窗口
         setOpen({...isOpen, dictDialog: true});
       }}>
         <ListItemText primary="数据字典" />
       </MenuItem>
       <MenuItem onClick={() => {
-        setAnchorEl(null);
+        setAnchorEl(a => ({...a, config: null}));
         //TODO: 打开设置窗口
         setOpen({...isOpen, initSeqDialog: true});
       }}>
         <ListItemText primary="初始化序列" />
+      </MenuItem>
+    </Menu>
+  );
+
+  const comDevMenu = (
+    <Menu
+      anchorEl={anchorEl.comDev}
+      open={isMenuOpen.comDev}
+      classes={{
+        list: classes.comDevMenu,
+      }}
+      keepMounted
+      onClose={() => {
+        setAnchorEl(a => ({...a, comDev: null}));
+      }}
+      anchorOrigin={{
+        vertical: 'bottom',
+        horizontal: 'center',
+      }}
+      transformOrigin={{
+        vertical: 'top',
+        horizontal: 'center',
+      }}
+      getContentAnchorEl={null}
+    >
+      <MenuItem dense disabled>
+        <ListItemText primary={deviceStore.devPath} />
+        <ListItemSecondaryAction>
+          <Tooltip title="断开连接" arrow>
+            <IconButton size='small' onClick={() => {
+              comService.disconnect();
+              setAnchorEl(a => ({...a, comDev: null}));
+              enqueueSnackbar(`已断开与${deviceStore.devPath}的连接`, {
+                variant: 'warning',
+                anchorOrigin: {vertical: 'bottom', horizontal: 'right'},
+              });
+            }}>
+              <LinkOffIcon fontSize="small" color='error' />
+            </IconButton>
+          </Tooltip>
+        </ListItemSecondaryAction>
       </MenuItem>
     </Menu>
   );
@@ -300,8 +327,12 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
               edge="start"
               className={classes.menuButton}
               color="inherit"
-              onClick={() => {
-                setOpen({...isOpen, comDialog: true});
+              onClick={e => {
+                if(deviceStore.online) {
+                  setAnchorEl(a => ({...a, comDev: e.currentTarget}));
+                } else {
+                  setOpen({...isOpen, comDialog: true});
+                }
               }}
             >
               <Badge variant="dot" classes={{
@@ -323,7 +354,7 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
             color="inherit"
             aria-label="menu"
             onClick={e => {
-              setAnchorEl(e.currentTarget);
+              setAnchorEl(a => ({...a, config: e.currentTarget}));
             }}
           >
             <Tooltip title="设置" arrow>
@@ -370,8 +401,12 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
           try {
             await Promise.all([
               delay(500),
-              comService.connect(path, baudrate)
+              (async() => {
+                await comService.connect(path, baudrate);
+                await comService.configUplink(deviceStore.currentSelectedItem?.seq.map(e => e.cmd) ?? []);
+              })(),
             ]);
+
             enqueueSnackbar(`${path}连接成功`, {
               variant: 'success',
               anchorOrigin: {vertical: 'bottom', horizontal: 'right'},
@@ -418,7 +453,7 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
                 设备:
               </div>
               {
-                code == null ? (
+                displayCode == null ? (
                   <Chip icon={<Autorenew />} label='请扫描' size='small'/>
                 ) : deviceStore.currentSelectedDevice != null ? (
                   <Tooltip title={
@@ -449,44 +484,105 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
                         </Grid>
                         <Grid item xs={10}>
                           <Typography variant='caption' noWrap>
-                          {deviceStore.currentSelectedDevice?.key}
+                            {deviceStore.currentSelectedDevice?.key}
                           </Typography>
                         </Grid>
                       </Grid>
                     </>
                   } arrow>
-                    <Chip color='primary' icon={<CheckIcon />} label={code} size='small'/>
+                    <Chip color='primary' icon={<CheckIcon />} label={displayCode} size='small'/>
                   </Tooltip>
                 ) : (
                   <Tooltip title="数据字典中未匹配到此设备" arrow>
-                    <Chip color='secondary' icon={<ErrorOutlineIcon />} label={code} size='small'/>
+                    <Chip color='secondary' icon={<ErrorOutlineIcon />} label={displayCode} size='small'/>
                   </Tooltip>
                 )
               }
             </div>
 
-            <Stepper classes={{'root': classes.stepper}}>
+            <Stepper classes={{'root': classes.stepper}} activeStep={activeStep}>
               <Step>
                 <StepLabel>
-                  扫描设备
+                  扫描二维码
                 </StepLabel>
               </Step>
               <Step>
                 <StepLabel>
-                  步骤2
+                  接入设备
                 </StepLabel>
               </Step>
               <Step>
                 <StepLabel>
-                  步骤3
+                  配置设备
+                </StepLabel>
+              </Step>
+              <Step>
+                <StepLabel>
+                  设备自检
                 </StepLabel>
               </Step>
             </Stepper>
 
-            <ScanMan onScan={value => {
-              setCode(value);
+            <ScanMan onScan={avoidReenter(async (value: string) => {
+              console.debug('scan func called');
+              setDisplayCode(value);
               deviceStore.selectCurrentDevice(value);
-            }} />
+              const currentDev = deviceStore.currentSelectedDevice;
+              if(currentDev != null) {
+                setActiveStep(s => s == 0 ? 1 : s);
+                //TODO: 等待, 禁止重入
+                await comService.waitDev(); //发送完这个之后
+                setActiveStep(2);
+                await comService.geoCommand('set_device_sn', {
+                  device_sn: currentDev.sn,
+                });
+                await comService.geoCommand('set_id_apikey', {
+                  id: currentDev.did,
+                  apikey: currentDev.key,
+                });
+                setActiveStep(3);
+                let succCount = 0;
+                while(true) {
+                  const frame = await comService.readGeoFrame();
+                  if(frame.type == 'prop') {
+                    for(const k in frame.data) {
+                      if(k == currentDev.did) {
+                        console.debug('did matched');
+                        const items = frame.data[k];
+                        for(const itemName in items) {
+                          const seqData = items[itemName];
+                          for(const date in seqData) {
+                            const record = seqData[date];
+                            switch(currentDev.sn.slice(0, 2)) {
+                              case 'LF':
+                                if('X' in record && 'Y' in record) {
+                                  console.debug('is LF!');
+                                  if(Math.abs(record.X) < 2 && Math.abs(record.Y) < 2) {
+                                    succCount++;
+                                    console.debug('checked!');
+                                  }
+                                }
+                                break;
+                            }
+                            console.debug({record});
+                          }
+                        }
+                      }
+                    }
+
+                    if(succCount > 0) {
+                      break;
+                    }
+                  }
+                }
+
+                console.debug('done');
+                setActiveStep(4);
+              } else {
+                play('invalid_qrcode');
+                setActiveStep(s => s == 1 ? 0 : s);
+              }
+            })} />
 
             {/* <Button variant="contained" endIcon={<Send />} className={classes.commitButton} onClick={() => {
 
@@ -508,6 +604,7 @@ export default inject("deviceStore", "comService")(observer(({deviceStore, comSe
             </Container>
           </footer>
           {configMenu}
+          {comDevMenu}
         </div>
       </div>
     </div>

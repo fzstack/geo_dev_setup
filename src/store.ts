@@ -3,6 +3,7 @@ import MqttClient from '@/utilities/mqtt_client'
 import XLSX from 'xlsx';
 import confMan from '@/conf_man';
 import ComService from '@/com_service';
+import { TypedJSON, jsonObject, jsonMember, jsonArrayMember } from 'typedjson';
 
 type Origin = {
   topic: string,
@@ -122,8 +123,8 @@ type SeqItem = {
 }
 
 type InitSeqConfigItemProps = {
-  name: string,
-  seq: SeqItem[],
+  name: string;
+  seq: SeqItem[];
 }
 
 export class InitSeqConfigItem {
@@ -160,39 +161,39 @@ export class DeviceStore {
   devices: Device[] = [];
   origins: Origin[] = [];
   autoAuth: boolean = true;
-  online: boolean = false;
   initSeqConfigItems: InitSeqConfigItem[];
   currentSelectedItem: InitSeqConfigItem | null = null;
   dataDictItems: DataDictItem[] = [];
   currentSelectedDevice: DataDictItem | null = null;
+  devPath: string | null = null;
 
   constructor(private comService: ComService) {
     makeObservable(this, {
       devices: observable,
       origins: observable,
       autoAuth: observable,
-      online: observable,
       initSeqConfigItems: observable,
       currentSelectedItem: observable,
       dataDictItems: observable,
       currentSelectedDevice: observable,
+      devPath: observable,
+      online: computed,
       currentItem: computed,
       setAutoAuth: action,
       addDevice: action,
       selectItem: action,
       loadDataDict: action,
       selectCurrentDevice: action,
-      setOnline: action,
+      setPath: action,
     });
 
-    comService.on('connected', () => {
-      this.setOnline(true);
+    comService.on('connected', (path) => {
+      this.setPath(path);
     });
 
     comService.on('disconnected', () => {
-      this.setOnline(false);
+      this.setPath(null);
     });
-
 
     const dataDictPath = confMan.get('dataDictPath');
     if(dataDictPath != null) {
@@ -202,50 +203,13 @@ export class DeviceStore {
       this.loadDataDict(val as string);
     });
 
-    this.initSeqConfigItems = [
-      new InitSeqConfigItem(this, {
-        name: 'TEST',
-        seq: [
-          {
-            cmd: "AT+TFREQ=FFF",
-            desc: "设置发送频率",
-          },
-          {
-            cmd: "AT+RFREQ=FFF",
-            desc: "设置接收频率",
-          }
-        ],
-      }),
-      new InitSeqConfigItem(this, {
-        name: '网关',
-        seq: [
-          {
-            cmd: "AT+HELLO",
-            desc: "你好",
-          },
-        ],
-      }),
-      new InitSeqConfigItem(this, {
-        name: '子设备',
-        seq: [
-          {
-            cmd: "AT+TEST",
-            desc: "测试",
-          },
-          {
-            cmd: "AT+CHN=5",
-            desc: "设置频段",
-          },
-          {
-            cmd: "AT+BALABALA",
-            desc: "其他的",
-          }
-        ],
-      }),
-    ];
+    this.initSeqConfigItems = (confMan.get('initSeqs') as InitSeqConfigItemProps[])
+      .map(e => new InitSeqConfigItem(this, e));
+    this.currentSelectedItem = this.initSeqConfigItems.filter(e => e.name == confMan.get('selectedInitSeqName'))?.[0];
+  }
 
-    this.currentSelectedItem = this.initSeqConfigItems[0];
-
+  get online() {
+    return this.devPath != null;
   }
 
   get currentItem() {
@@ -292,8 +256,8 @@ export class DeviceStore {
     console.log('current', this.currentSelectedDevice)
   }
 
-  setOnline(ol: boolean) {
-    this.online = ol;
+  setPath(path: string | null) {
+    this.devPath = path;
   }
 
 }

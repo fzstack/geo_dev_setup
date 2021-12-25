@@ -29,6 +29,7 @@
     }
   },
   "experimentalDecorators": true,
+  "emitDecoratorMetadata": true,
   "downlevelIteration": true,
   "exclude": [
     "test",
